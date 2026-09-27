@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zoom Satelit — Kg. Mak Kemas</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<style>
+  :root{--ink:#11161f;--panel:#161c28;--line:#2b3545;--text:#e7ecf3;--muted:#8a97a8;--amber:#f4a425}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:system-ui,sans-serif;background:var(--ink);color:var(--text);min-height:100vh}
+  .wrap{max-width:1200px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border:1px solid var(--line);overflow:hidden}
+  #out{position:absolute;inset:0;width:100%;height:100%}
+  /* Peta dirender pada saiz penuh 1920x1080 di luar skrin; hanya kanvas komposit dipaparkan */
+  #map{position:fixed;left:-99999px;top:0;width:1920px;height:1080px}
+  .panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:14px;
+         background:var(--panel);border:1px solid var(--line);padding:14px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:7px;background:#0d1118;color:var(--text);border:1px solid var(--line)}
+  input[type=checkbox]{width:auto}
+  .btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+  button{padding:10px 16px;border:0;font-weight:700;cursor:pointer;background:#2b3545;color:var(--text)}
+  button.pri{background:var(--amber);color:#111}
+  button:disabled{opacity:.5;cursor:default}
+  #status{margin-top:10px;font-size:13px;color:var(--muted);min-height:1.4em}
+  progress{width:100%;height:8px;margin-top:6px}
+  .note{font-size:12px;color:var(--muted);margin-top:14px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Video zoom satelit → Kg. Mak Kemas, Bukit Payong</h1>
+  <p class="sub">Sasaran tetap: 5.224670, 103.122130 · Imej satelit Esri World Imagery · Output MP4 16:9</p>
+
+  <div class="stage"><canvas id="out" width="1920" height="1080"></canvas></div>
+  <div id="map"></div>
+
+  <div class="panel">
+    <div>
+      <label for="photo">Gambar rujukan (babak akhir)</label>
+      <input type="file" id="photo" accept="image/*">
+    </div>
+    <div>
+      <label for="bearing">Arah kamera akhir (darjah, 0 = menghadap utara)</label>
+      <input type="number" id="bearing" value="0" step="5" min="-180" max="360">
+    </div>
+    <div>
+      <label for="res">Resolusi</label>
+      <select id="res">
+        <option value="1">1920×1080 (Full HD)</option>
+        <option value="2">3840×2160 (4K — lebih lama)</option>
+      </select>
+    </div>
+    <div>
+      <label for="fps">Kadar bingkai</label>
+      <select id="fps"><option>30</option><option>60</option></select>
+    </div>
+    <div>
+      <label><input type="checkbox" id="terrain" checked> Rupa bumi 3D (bukit)</label>
+      <label><input type="checkbox" id="captions" checked> Label lokasi</label>
+    </div>
+  </div>
+
+  <div class="btns">
+    <button id="preview">▶ Pratonton (masa nyata)</button>
+    <button id="render" class="pri">⬇ Render MP4 (bingkai demi bingkai)</button>
+  </div>
+  <div id="status">Memuatkan peta…</div>
+  <progress id="prog" value="0" max="1" hidden></progress>
+
+  <p class="note">
+    Pratonton bergerak dalam masa nyata dan mungkin kabur jika imej belum dimuat. Render MP4 menunggu setiap
+    bingkai dimuat penuh sebelum merakam, jadi hasilnya licin tanpa bingkai kabur. Gambar rujukan hanya dibaca
+    dalam pelayar anda dan tidak dimuat naik ke mana-mana. Gunakan Chrome atau Edge versi terkini.
+  </p>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/mp4-muxer@5.2.2/build/mp4-muxer.js"></script>
+<script>
+const TARGET = [103.122130, 5.224670];   // [lng, lat]
+const START  = [40, 12];                  // mula dari atas Lautan Hindi/Afrika, globe berputar ke timur
+const DURATION = 20;                      // saat
+
+const $ = id => document.getElementById(id);
+const out = $('out'), ctx = out.getContext('2d');
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => t * t * (3 - 2 * t);                     // smoothstep
+const easeQ = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+
+/* ---------- Laluan kamera: fungsi masa t (saat) → kedudukan kamera ---------- */
+function camera(t, finalBearing) {
+  // 0–6 s: globe berputar ke Asia Tenggara; titik fokus beransur ke sasaran
+  const c = easeQ(seg(t, 0, 6));
+  const center = [lerp(START[0], TARGET[0], c), lerp(START[1], TARGET[1], c)];
+  // Zoom: tahan di angkasa, kemudian turun berterusan (zoom linear = kelajuan menurun yang konsisten)
+  let zoom;
+  if (t < 2.5) zoom = 1.6;
+  else if (t < 15.5) zoom = lerp(1.6, 18.6, easeQ(seg(t, 2.5, 15.5)));
+  else zoom = lerp(18.6, 19.7, ease(seg(t, 15.5, 17.5)));
+  // Condong: kekal pandangan satelit tegak, kemudian beralih ke pandangan udara / dron
+  const pitch = lerp(0, 45, ease(seg(t, 10.5, 15.5))) + lerp(0, 30, ease(seg(t, 15, 17.5)));
+  const bearing = lerp(0, finalBearing, ease(seg(t, 9, 17)));
+  return { center, zoom, pitch, bearing };
+}
+
+/* ---------- Label dokumentari ---------- */
+const CAPTIONS = [
+  { z0: 2.4, z1: 4.5,  text: 'Asia Tenggara' },
+  { z0: 4.5, z1: 7.5,  text: 'Malaysia' },
+  { z0: 7.5, z1: 10.5, text: 'Terengganu' },
+  { z0: 10.5, z1: 13.5, text: 'Daerah Marang' },
+  { z0: 13.5, z1: 19.8, text: 'Kg. Mak Kemas, Bukit Payong', sub: 'Jalan Surau Alur Guntung' },
+];
+
+/* ---------- Bintang (latar angkasa) ---------- */
+const stars = Array.from({ length: 420 }, (_, i) => {
+  const r = Math.sin(i * 12.9898) * 43758.5453; const r2 = Math.sin(i * 78.233) * 12543.123;
+  return { x: r - Math.floor(r), y: r2 - Math.floor(r2), s: 0.4 + ((i * 7) % 10) / 10, a: 0.3 + ((i * 13) % 7) / 10 };
+});
+
+let photo = null;
+let map;
+
+function buildStyle(terrain) {
+  const style = {
+    version: 8,
+    projection: { type: 'globe' },
+    sky: {
+      'sky-color': '#7fb2e6', 'horizon-color': '#d6e6f5', 'fog-color': '#cfdbe6',
+      'sky-horizon-blend': 0.6, 'horizon-fog-blend': 0.7, 'fog-ground-blend': 0.85,
+      'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 6, 0.8, 9, 0]
+    },
+    sources: {
+      sat: {
+        type: 'raster', tileSize: 256, maxzoom: 19,
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        attribution: 'Esri, Maxar, Earthstar Geographics'
+      }
+    },
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': '#0b1a2a' } },
+      { id: 'sat', type: 'raster', source: 'sat', paint: { 'raster-fade-duration': 0 } }
+    ]
+  };
+  if (terrain) {
+    style.sources.dem = {
+      type: 'raster-dem', encoding: 'terrarium', tileSize: 256, maxzoom: 14,
+      tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png']
+    };
+    style.terrain = { source: 'dem', exaggeration: 1 };
+  }
+  return style;
+}
+
+function initMap() {
+  const scale = +$('res').value;
+  out.width = 1920 * scale; out.height = 1080 * scale;
+  if (map) map.remove();
+  map = new maplibregl.Map({
+    container: 'map',
+    style: buildStyle($('terrain').checked),
+    center: START, zoom: 1.6, pitch: 0, bearing: 0,
+    maxPitch: 85, pixelRatio: scale,
+    interactive: false, attributionControl: false, fadeDuration: 0,
+    canvasContextAttributes: { preserveDrawingBuffer: true, antialias: true }
+  });
+  return new Promise(res => map.once('load', () => { waitIdle().then(res); }));
+}
+
+function waitIdle(timeout = 15000) {
+  return new Promise(res => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; res(); } };
+    map.once('idle', fin);
+    setTimeout(fin, timeout);
+  });
+}
+
+/* ---------- Komposit satu bingkai ---------- */
+function drawFrame(t) {
+  const W = out.width, H = out.height, S = W / 1920;
+  const cam = camera(t, +$('bearing').value || 0);
+
+  // 1. Latar angkasa + bintang (kelihatan di sekeliling globe pada zoom rendah)
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const starA = clamp(1 - (cam.zoom - 1.6) / 2.2);
+  if (starA > 0) {
+    for (const s of stars) {
+      ctx.globalAlpha = s.a * starA; ctx.fillStyle = '#fff';
+      ctx.fillRect(s.x * W, s.y * H, s.s * S * 1.6, s.s * S * 1.6);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // 2. Peta (globe → satelit → udara)
+  ctx.drawImage(map.getCanvas(), 0, 0, W, H);
+
+  // 3. Peralihan malam → siang: garis terminator bergerak melintasi globe
+  const night = 1 - ease(seg(t, 0.3, 5.5));
+  if (night > 0) {
+    const edge = lerp(-0.2, 1.3, 1 - night);            // kedudukan terminator (0..1 lebar)
+    const g = ctx.createLinearGradient(0, 0, W, H * 0.3);
+    g.addColorStop(0, 'rgba(2,6,20,0)');
+    g.addColorStop(clamp(edge - 0.15), 'rgba(2,6,20,0)');
+    g.addColorStop(clamp(edge + 0.1), `rgba(2,6,20,${0.82 * night + 0.1})`);
+    g.addColorStop(1, `rgba(2,6,20,${0.88 * night + 0.1})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  // 4. Jerebu atmosfera ringan semasa turun (perspektif udara)
+  const haze = 0.18 * Math.sin(Math.PI * seg(cam.zoom, 5, 15));
+  if (haze > 0) { ctx.fillStyle = `rgba(215,228,240,${haze})`; ctx.fillRect(0, 0, W, H); }
+
+  // 5. Label lokasi
+  if ($('captions').checked) {
+    const photoA0 = ease(seg(t, 16.8, 17.6));
+    for (const c of CAPTIONS) {
+      const a = Math.min(ease(seg(cam.zoom, c.z0, c.z0 + 0.6)), 1 - ease(seg(cam.zoom, c.z1 - 0.6, c.z1))) * (1 - photoA0);
+      if (a <= 0.01) continue;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(0,0,0,.45)';
+      ctx.fillRect(64 * S, H - 190 * S, (c.sub ? 760 : 520) * S, (c.sub ? 120 : 84) * S);
+      ctx.fillStyle = '#f4a425'; ctx.fillRect(64 * S, H - 190 * S, 6 * S, (c.sub ? 120 : 84) * S);
+      ctx.fillStyle = '#fff'; ctx.font = `700 ${44 * S}px system-ui, sans-serif`;
+      ctx.fillText(c.text, 92 * S, H - 132 * S);
+      if (c.sub) { ctx.font = `500 ${28 * S}px system-ui, sans-serif`; ctx.fillStyle = '#dfe6ee'; ctx.fillText(c.sub, 92 * S, H - 90 * S); }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // 6. Babak akhir: peralihan lancar ke gambar rujukan (sedikit zoom masuk berterusan)
+  const pa = ease(seg(t, 16.8, 18.2));
+  if (pa > 0 && photo) {
+    const k = lerp(1.08, 1.0, ease(seg(t, 16.8, DURATION)));   // teruskan gerakan ke hadapan
+    const r = Math.max(W / photo.width, H / photo.height) * k;
+    const pw = photo.width * r, ph = photo.height * r;
+    ctx.globalAlpha = pa;
+    ctx.drawImage(photo, (W - pw) / 2, (H - ph) / 2, pw, ph);
+    ctx.globalAlpha = 1;
+  }
+
+  // 7. Atribusi imej satelit (wajib)
+  ctx.font = `500 ${16 * S}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ctx.textAlign = 'right';
+  ctx.fillText(pa >= 1 ? '' : 'Imej: Esri, Maxar, Earthstar Geographics', W - 24 * S, H - 22 * S);
+  ctx.textAlign = 'left';
+
+  return cam;
+}
+
+function applyCamera(t) {
+  const cam = camera(t, +$('bearing').value || 0);
+  map.jumpTo(cam);
+}
+
+/* ---------- Pratonton masa nyata ---------- */
+let playing = false;
+async function preview() {
+  if (playing) return;
+  playing = true; setBusy(true);
+  const t0 = performance.now();
+  await new Promise(res => {
+    const step = () => {
+      const t = (performance.now() - t0) / 1000;
+      if (t > DURATION) { res(); return; }
+      applyCamera(t);
+      map.once('render', () => drawFrame(t));
+      status(`Pratonton ${t.toFixed(1)} / ${DURATION} s`);
+      requestAnimationFrame(step);
+    };
+    step();
+  });
+  playing = false; setBusy(false); status('Pratonton selesai.');
+}
+
+/* ---------- Render MP4 bingkai demi bingkai (WebCodecs) ---------- */
+async function render() {
+  if (!('VideoEncoder' in window)) { alert('Pelayar ini tidak menyokong WebCodecs. Sila guna Chrome/Edge terkini.'); return; }
+  if (!photo && !confirm('Gambar rujukan belum dipilih. Teruskan tanpa babak akhir gambar?')) return;
+  setBusy(true);
+  status('Menyediakan peta…');
+  await initMap();
+
+  const fps = +$('fps').value, W = out.width, H = out.height;
+  const candidates = [
+    { codec: W > 1920 ? 'avc1.640034' : 'avc1.640032', mux: 'avc' },
+    { codec: 'vp09.00.51.08', mux: 'vp9' }
+  ];
+  let cfg = null;
+  for (const c of candidates) {
+    const conf = { codec: c.codec, width: W, height: H, bitrate: W > 1920 ? 45e6 : 16e6, framerate: fps };
+    try { if ((await VideoEncoder.isConfigSupported(conf)).supported) { cfg = { conf, mux: c.mux }; break; } } catch (e) {}
+  }
+  if (!cfg) { alert('Tiada pengekod video yang disokong pada pelayar ini.'); setBusy(false); return; }
+
+  const muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: { codec: cfg.mux, width: W, height: H, frameRate: fps },
+    fastStart: 'in-memory'
+  });
+  let encErr = null;
+  const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { encErr = e; } });
+  enc.configure(cfg.conf);
+
+  const total = Math.round(DURATION * fps);
+  const prog = $('prog'); prog.hidden = false; prog.max = total;
+  for (let i = 0; i < total; i++) {
+    if (encErr) break;
+    const t = i / fps;
+    applyCamera(t);
+    await waitIdle();                        // tunggu semua jubin imej dimuat → tiada bingkai kabur
+    drawFrame(t);
+    const frame = new VideoFrame(out, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+    enc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+    frame.close();
+    if (enc.encodeQueueSize > 8) await new Promise(r => setTimeout(r, 0));
+    prog.value = i + 1;
+    status(`Merender bingkai ${i + 1} / ${total}…`);
+  }
+  if (encErr) { alert('Ralat pengekod: ' + encErr.message); setBusy(false); return; }
+  await enc.flush();
+  muxer.finalize();
+  const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `zoom-satelit-mak-kemas-${W}x${H}.mp4`;
+  a.click();
+  prog.hidden = true; setBusy(false);
+  status(`Siap: ${(blob.size / 1e6).toFixed(1)} MB (${cfg.mux.toUpperCase()}) dimuat turun.`);
+}
+
+function status(s) { $('status').textContent = s; }
+function setBusy(b) { $('preview').disabled = b; $('render').disabled = b; }
+
+$('photo').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => { photo = img; status(`Gambar rujukan dimuat (${img.width}×${img.height}).`); drawFrame(DURATION); };
+  img.src = URL.createObjectURL(f);
+});
+$('preview').onclick = preview;
+$('render').onclick = render;
+['res', 'terrain'].forEach(id => $(id).addEventListener('change', async () => {
+  setBusy(true); status('Memuat semula peta…'); await initMap(); drawFrame(0); setBusy(false); status('Sedia.');
+}));
+
+initMap().then(() => { drawFrame(0); setBusy(false); status('Sedia. Pilih gambar rujukan, kemudian Pratonton atau Render MP4.'); });
+setBusy(true);
+</script>
+</body>
+</html>
