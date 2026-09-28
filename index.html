@@ -19,7 +19,7 @@
 
   /* SIDEBAR */
   .side{width:380px;min-width:380px;height:100%;background:var(--panel);
-        border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+        border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto}
   .head{padding:22px 22px 16px;border-bottom:1px solid var(--line);
         background:linear-gradient(180deg,#1b2230,#161c28)}
   .kicker{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--amber);font-weight:700}
@@ -44,7 +44,7 @@
   .chip:hover{color:#fff;border-color:#3d4a5e}
   .chip.on{background:var(--amber);color:#241a00;border-color:var(--amber)}
 
-  .listwrap{flex:1;overflow-y:auto}
+  .listwrap{flex:1;overflow-y:auto;min-height:240px}
   .lh{padding:13px 18px 7px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
       color:var(--muted);font-weight:700;display:flex;justify-content:space-between;align-items:center;
       position:sticky;top:0;background:var(--panel);z-index:2}
@@ -58,6 +58,39 @@
   .row .bar{height:6px;border-radius:4px;background:#0c0f15;width:78px;overflow:hidden;flex-shrink:0}
   .row .bar i{display:block;height:100%;border-radius:4px}
   .row .cnt{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:15px;width:26px;text-align:right;flex-shrink:0}
+
+  .row .add{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--panel-2);
+       color:var(--muted);font-weight:800;font-size:15px;line-height:1;cursor:pointer;flex-shrink:0;font-family:inherit}
+  .row .add:hover{color:#fff;border-color:var(--amber)}
+  .row .add.on{background:var(--amber);color:#241a00;border-color:var(--amber);font-size:12px}
+
+  /* LALUAN */
+  .route{border-bottom:1px solid var(--line);padding:12px 18px;display:flex;flex-direction:column;gap:8px}
+  .route .rh{display:flex;justify-content:space-between;align-items:center;font-size:11px;
+       letter-spacing:.14em;text-transform:uppercase;color:var(--amber);font-weight:700}
+  .route .hint{font-size:11.5px;color:var(--muted)}
+  .stops{list-style:none;max-height:124px;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+  .stops li{display:flex;align-items:center;gap:8px;font-size:12px;background:var(--panel-2);
+       border-radius:7px;padding:5px 8px}
+  .stops li .n{width:18px;height:18px;border-radius:50%;background:var(--amber);color:#241a00;font-weight:800;
+       font-size:10.5px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .stops li .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stops li button{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 3px;font-family:inherit}
+  .stops li button:hover{color:#fff}
+  .ropts{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:11.5px;color:var(--muted)}
+  .ropts select{background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;
+       padding:3px 6px;font-family:inherit;font-size:11.5px}
+  .rbtns{display:flex;flex-wrap:wrap;gap:6px}
+  .btn{font-size:11.5px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);
+       color:var(--text);cursor:pointer;font-weight:600;font-family:inherit;text-decoration:none}
+  .btn:hover{border-color:#3d4a5e}
+  .btn.go{background:var(--amber);color:#241a00;border-color:var(--amber)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .glinks{display:flex;flex-direction:column;gap:4px}
+  .pop-add{display:block;margin:8px 15px 10px;text-align:center}
+  .rnum{background:var(--amber);color:#241a00;font-weight:800;font-size:11px;border-radius:50%;
+       width:20px;height:20px;display:flex;align-items:center;justify-content:center;border:2px solid #fff;
+       box-shadow:0 2px 6px rgba(0,0,0,.4)}
 
   .foot{padding:11px 18px;border-top:1px solid var(--line);font-size:10.5px;color:#5d6877;line-height:1.5}
 
@@ -115,6 +148,24 @@
       </div>
       <div class="chips" id="chips"></div>
     </div>
+    <div class="route" id="route">
+      <div class="rh"><span>Laluan Google Maps</span><span id="rcount"></span></div>
+      <div class="hint" id="rhint">Tekan <b>+</b> pada poskod untuk tambah hentian laluan.</div>
+      <ol class="stops" id="stops"></ol>
+      <div class="ropts">
+        <label>Mod <select id="rmode">
+          <option value="driving">Memandu</option>
+          <option value="walking">Berjalan</option>
+          <option value="bicycling">Berbasikal</option>
+        </select></label>
+        <label><input type="checkbox" id="rmyloc" checked> Mula dari lokasi saya</label>
+      </div>
+      <div class="rbtns">
+        <button class="btn" id="rsort">Susun ikut jarak</button>
+        <button class="btn" id="rclear">Kosongkan</button>
+      </div>
+      <div class="glinks" id="glinks"></div>
+    </div>
     <div class="listwrap">
       <div class="lh"><span>Senarai Poskod</span><span id="cntlabel"></span></div>
       <div id="list"></div>
@@ -153,7 +204,8 @@ function popupHtml(p){
   let rows = p.items.map(it=>`<div class="pi"><b>${esc(it.name)||'(tiada nama)'}</b>
      <span>${esc(it.s1)}${it.s2?', '+esc(it.s2):''}</span></div>`).join('');
   return `<div class="pop-h"><div class="pc">${p.pos}</div><div class="tw">${esc(p.town)}</div>
-          <div class="cn">${p.count} hartanah untuk pos</div></div><div class="pop-b">${rows}</div>`;
+          <div class="cn">${p.count} hartanah untuk pos</div></div><div class="pop-b">${rows}</div>
+          <button class="btn pop-add" data-pos="${p.pos}">${inRoute(p.pos)?'✓ Dalam laluan (buang)':'+ Tambah ke laluan'}</button>`;
 }
 
 const markers={};
@@ -164,14 +216,16 @@ function draw(points){
     const m=L.circleMarker([p.lat,p.lng],{
       radius:radFor(p.count),fillColor:colorFor(p.count),color:'#fff',
       weight:1.4,opacity:.9,fillOpacity:.82
-    }).bindPopup(popupHtml(p),{maxWidth:300});
+    }).bindPopup(()=>popupHtml(p),{maxWidth:300});
     m.bindTooltip(`${p.pos} · ${p.count}`,{direction:'top',offset:[0,-4]});
     m.addTo(layer); markers[p.pos]=m;
   });
 }
 
 // Sidebar list
+let lastPts=DATA.points;
 function renderList(points){
+  lastPts=points;
   const L_=document.getElementById('list'); L_.innerHTML='';
   document.getElementById('cntlabel').textContent = points.length+' poskod';
   points.forEach(p=>{
@@ -179,7 +233,9 @@ function renderList(points){
     d.innerHTML=`<span class="dot" style="background:${colorFor(p.count)}"></span>
       <div class="meta"><div class="pc">${p.pos}</div><div class="tw">${esc(p.town)}</div></div>
       <div class="bar"><i style="width:${Math.max(8,p.count/maxN*100)}%;background:${colorFor(p.count)}"></i></div>
-      <div class="cnt">${p.count}</div>`;
+      <div class="cnt">${p.count}</div>
+      <button class="add${inRoute(p.pos)?' on':''}" title="${inRoute(p.pos)?'Buang dari laluan':'Tambah ke laluan'}">${inRoute(p.pos)?'✓':'+'}</button>`;
+    d.querySelector('.add').onclick=e=>{ e.stopPropagation(); toggleStop(p.pos); };
     d.onclick=()=>{ map.flyTo([p.lat,p.lng],14,{duration:.7});
       setTimeout(()=>markers[p.pos]&&markers[p.pos].openPopup(),650); };
     L_.appendChild(d);
@@ -218,11 +274,111 @@ function apply(){
 }
 document.getElementById('q').addEventListener('input',()=>{activeTown=null;highlightChips();apply();});
 
+// Laluan Google Maps
+const byPos=Object.fromEntries(DATA.points.map(p=>[p.pos,p]));
+let route=[];
+const routeLayer=L.layerGroup().addTo(map);
+const MAXWP=9; // had waypoint bagi satu pautan Google Maps
+function inRoute(pos){ return route.includes(pos); }
+function toggleStop(pos){
+  route = inRoute(pos) ? route.filter(x=>x!==pos) : [...route,pos];
+  refreshRoute();
+}
+function moveStop(i,d){
+  const j=i+d; if(j<0||j>=route.length) return;
+  [route[i],route[j]]=[route[j],route[i]]; refreshRoute();
+}
+function km(a,b){
+  const R=6371,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r;
+  const h=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+// Susun jiran terdekat bermula dari hentian pertama
+function sortRoute(){
+  if(route.length<3) return;
+  const left=route.slice(1).map(x=>byPos[x]); const out=[byPos[route[0]]];
+  while(left.length){
+    const cur=out[out.length-1]; let bi=0;
+    left.forEach((p,i)=>{ if(km(cur,p)<km(cur,left[bi])) bi=i; });
+    out.push(left.splice(bi,1)[0]);
+  }
+  route=out.map(p=>p.pos); refreshRoute();
+}
+function gUrl(origin,stops,mode){
+  const ll=p=>`${p.lat},${p.lng}`;
+  const u=new URLSearchParams({api:'1',travelmode:mode,destination:ll(stops[stops.length-1])});
+  if(origin) u.set('origin',ll(origin));
+  if(stops.length>1) u.set('waypoints',stops.slice(0,-1).map(ll).join('|'));
+  return 'https://www.google.com/maps/dir/?'+u.toString();
+}
+// Pecahkan kepada beberapa pautan jika hentian melebihi had Google Maps
+function buildLinks(){
+  const pts=route.map(x=>byPos[x]), mode=document.getElementById('rmode').value;
+  const links=[]; let origin=null, i=0;
+  if(!document.getElementById('rmyloc').checked){ origin=pts[0]; i=1; }
+  while(i<pts.length){
+    const chunk=pts.slice(i,i+MAXWP+1);
+    links.push({url:gUrl(origin,chunk,mode),from:origin,stops:chunk});
+    origin=chunk[chunk.length-1]; i+=chunk.length;
+  }
+  return links;
+}
+function refreshRoute(){
+  const ol=document.getElementById('stops'); ol.innerHTML='';
+  route.forEach((pos,i)=>{
+    const p=byPos[pos], li=document.createElement('li');
+    li.innerHTML=`<span class="n">${i+1}</span><span class="t">${p.pos} · ${esc(p.town)}</span>
+      <button title="Naik">▲</button><button title="Turun">▼</button><button title="Buang">✕</button>`;
+    const b=li.querySelectorAll('button');
+    b[0].onclick=()=>moveStop(i,-1); b[1].onclick=()=>moveStop(i,1); b[2].onclick=()=>toggleStop(pos);
+    ol.appendChild(li);
+  });
+  const pts=route.map(x=>byPos[x]);
+  let dist=0; for(let i=1;i<pts.length;i++) dist+=km(pts[i-1],pts[i]);
+  document.getElementById('rcount').textContent = route.length
+    ? `${route.length} hentian${pts.length>1?' · ~'+dist.toFixed(1)+' km':''}` : '';
+  document.getElementById('rhint').style.display = route.length?'none':'';
+  document.getElementById('rsort').disabled = route.length<3;
+  document.getElementById('rclear').disabled = !route.length;
+
+  const gl=document.getElementById('glinks'); gl.innerHTML='';
+  const needTwo=!document.getElementById('rmyloc').checked && route.length===1;
+  if(route.length && !needTwo){
+    const links=buildLinks();
+    links.forEach((l,k)=>{
+      const a=document.createElement('a'); a.className='btn go'; a.href=l.url; a.target='_blank'; a.rel='noopener';
+      const label=`${l.from?l.from.pos:'Lokasi saya'} → ${l.stops[l.stops.length-1].pos}`;
+      a.textContent = links.length>1 ? `Buka Google Maps (${k+1}/${links.length}): ${label}` : `Buka di Google Maps: ${label}`;
+      gl.appendChild(a);
+    });
+  } else if(needTwo){
+    gl.innerHTML='<div class="hint">Pilih sekurang-kurangnya 2 poskod, atau tandakan "Mula dari lokasi saya".</div>';
+  }
+
+  // Lukis garis turutan hentian di peta (garis lurus, bukan jalan sebenar)
+  routeLayer.clearLayers();
+  if(pts.length>1) L.polyline(pts.map(p=>[p.lat,p.lng]),{color:'#f4a425',weight:3,dashArray:'6 6',opacity:.9}).addTo(routeLayer);
+  pts.forEach((p,i)=>L.marker([p.lat,p.lng],{interactive:false,
+    icon:L.divIcon({className:'',html:`<div class="rnum">${i+1}</div>`,iconSize:[20,20],iconAnchor:[10,10]})}).addTo(routeLayer));
+
+  renderList(lastPts);
+  document.querySelectorAll('.pop-add').forEach(b=>
+    b.textContent = inRoute(+b.dataset.pos)?'✓ Dalam laluan (buang)':'+ Tambah ke laluan');
+}
+document.getElementById('rsort').onclick=sortRoute;
+document.getElementById('rclear').onclick=()=>{ route=[]; refreshRoute(); };
+document.getElementById('rmode').onchange=refreshRoute;
+document.getElementById('rmyloc').onchange=refreshRoute;
+map.on('popupopen',e=>{
+  const b=e.popup.getElement().querySelector('.pop-add');
+  if(b) b.onclick=()=>toggleStop(+b.dataset.pos);
+});
+
 // Init
 document.getElementById('s-total').textContent=DATA.total;
 document.getElementById('s-pos').textContent=DATA.npos;
 document.getElementById('s-town').textContent=DATA.ntown;
-renderChips(); draw(DATA.points); renderList(DATA.points);
+renderChips(); draw(DATA.points); renderList(DATA.points); refreshRoute();
 </script>
 </body>
 </html>
