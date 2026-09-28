@@ -44,6 +44,15 @@
       <input type="file" id="photo" accept="image/*">
     </div>
     <div>
+      <label for="fit">Paparan gambar akhir</label>
+      <select id="fit">
+        <option value="full">Penuh (tepi diisi latar kabur) — sesuai gambar potret</option>
+        <option value="cover">Isi skrin 16:9 (gambar dipotong)</option>
+      </select>
+      <label for="fitY" style="margin-top:6px">Kedudukan potongan menegak (0 = atas, 100 = bawah)</label>
+      <input type="range" id="fitY" min="0" max="100" value="45">
+    </div>
+    <div>
       <label for="bearing">Arah kamera akhir (darjah, 0 = menghadap utara)</label>
       <input type="number" id="bearing" value="0" step="5" min="-180" max="360">
     </div>
@@ -124,7 +133,16 @@ const stars = Array.from({ length: 420 }, (_, i) => {
   return { x: r - Math.floor(r), y: r2 - Math.floor(r2), s: 0.4 + ((i * 7) % 10) / 10, a: 0.3 + ((i * 13) % 7) / 10 };
 });
 
-let photo = null;
+let photo = null, backdrop = null;
+function photoBackdrop(W, H) {
+  if (backdrop && backdrop.width === W && backdrop.src === photo) return backdrop;
+  backdrop = document.createElement('canvas'); backdrop.width = W; backdrop.height = H; backdrop.src = photo;
+  const b = backdrop.getContext('2d');
+  const r = Math.max(W / photo.width, H / photo.height) * 1.1, pw = photo.width * r, ph = photo.height * r;
+  b.filter = `blur(${Math.round(W / 40)}px) brightness(0.7)`;
+  b.drawImage(photo, (W - pw) / 2, (H - ph) / 2, pw, ph);
+  return backdrop;
+}
 let map;
 
 function buildStyle(terrain) {
@@ -237,11 +255,20 @@ function drawFrame(t) {
   // 6. Babak akhir: peralihan lancar ke gambar rujukan (sedikit zoom masuk berterusan)
   const pa = ease(seg(t, 16.8, 18.2));
   if (pa > 0 && photo) {
-    const k = lerp(1.08, 1.0, ease(seg(t, 16.8, DURATION)));   // teruskan gerakan ke hadapan
-    const r = Math.max(W / photo.width, H / photo.height) * k;
-    const pw = photo.width * r, ph = photo.height * r;
+    const k = lerp(1.12, 1.0, ease(seg(t, 16.8, DURATION)));   // teruskan gerakan ke hadapan
+    const cover = Math.max(W / photo.width, H / photo.height);
+    const contain = Math.min(W / photo.width, H / photo.height);
+    // Gambar potret/berbeza nisbah: tunjuk penuh di tengah, latar diisi versi kabur gambar yang sama
+    const full = $('fit').value === 'full' && Math.abs(photo.width / photo.height - W / H) > 0.15;
     ctx.globalAlpha = pa;
-    ctx.drawImage(photo, (W - pw) / 2, (H - ph) / 2, pw, ph);
+    if (full) {
+      ctx.drawImage(photoBackdrop(W, H), 0, 0, W, H);
+      const r = contain * k, pw = photo.width * r, ph = photo.height * r;
+      ctx.drawImage(photo, (W - pw) / 2, (H - ph) / 2, pw, ph);
+    } else {
+      const r = cover * k, pw = photo.width * r, ph = photo.height * r;
+      ctx.drawImage(photo, (W - pw) / 2, (H - ph) * $('fitY').value / 100, pw, ph);
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -345,6 +372,7 @@ $('photo').addEventListener('change', e => {
   img.src = URL.createObjectURL(f);
 });
 $('preview').onclick = preview;
+['fit', 'fitY'].forEach(id => $(id).addEventListener('input', () => { if (photo) drawFrame(DURATION); }));
 $('render').onclick = render;
 ['res', 'terrain'].forEach(id => $(id).addEventListener('change', async () => {
   setBusy(true); status('Memuat semula peta…'); await initMap(); drawFrame(0); setBusy(false); status('Sedia.');
